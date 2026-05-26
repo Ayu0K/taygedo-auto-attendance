@@ -25,7 +25,7 @@ describe('runLoginAction', () => {
           TAYGEDO_LOGIN_DEVICE_ID_PATH: devicePath,
         },
         api,
-        generateDeviceId: () => 'device-generated',
+        generateDeviceIdentity: () => ({ deviceId: 'device-generated', openudid: 'OPEN-GENERATED', vendorid: 'VENDOR-GENERATED' }),
       })
 
       expect(api.sendCaptcha).toHaveBeenCalledWith('13800138000', 'device-generated')
@@ -59,6 +59,8 @@ describe('runLoginAction', () => {
           TAYGEDO_LOGIN_PHONE: '13800138000',
           TAYGEDO_LOGIN_CAPTCHA: '123456',
           TAYGEDO_LOGIN_DEVICE_ID: 'device-from-secret',
+          TAYGEDO_LOGIN_OPENUDID: 'OPEN-FROM-SECRET',
+          TAYGEDO_LOGIN_VENDORID: 'VENDOR-FROM-SECRET',
           TAYGEDO_LOGIN_ACCOUNT_ID: 'main',
           TAYGEDO_LOGIN_ACCOUNT_NAME: '主账号',
           TAYGEDO_ACCOUNTS: JSON.stringify([
@@ -67,6 +69,8 @@ describe('runLoginAction', () => {
               name: '小号',
               uid: 'old-uid',
               deviceId: 'old-device',
+              openudid: 'OPEN-OLD',
+              vendorid: 'VENDOR-OLD',
               refreshToken: 'old-token',
             },
           ]),
@@ -84,6 +88,8 @@ describe('runLoginAction', () => {
           name: '小号',
           uid: 'old-uid',
           deviceId: 'old-device',
+          openudid: 'OPEN-OLD',
+          vendorid: 'VENDOR-OLD',
           refreshToken: 'old-token',
         },
         {
@@ -91,6 +97,8 @@ describe('runLoginAction', () => {
           name: '主账号',
           uid: 'tjd-uid',
           deviceId: 'device-from-secret',
+          openudid: 'OPEN-FROM-SECRET',
+          vendorid: 'VENDOR-FROM-SECRET',
           accessToken: 'access-token',
           refreshToken: 'refresh-token',
           laohuToken: 'laohu-token',
@@ -133,7 +141,7 @@ describe('runLoginAction', () => {
           TAYGEDO_LOGIN_UPDATED_ACCOUNTS_PATH: accountsPath,
         },
         api,
-        generateDeviceId: () => 'device-generated',
+        generateDeviceIdentity: () => ({ deviceId: 'device-generated', openudid: 'OPEN-GENERATED', vendorid: 'VENDOR-GENERATED' }),
       })
 
       expect(api.checkCaptcha).not.toHaveBeenCalled()
@@ -146,6 +154,8 @@ describe('runLoginAction', () => {
           name: '主账号',
           uid: 'tjd-uid',
           deviceId: 'device-generated',
+          openudid: 'OPEN-GENERATED',
+          vendorid: 'VENDOR-GENERATED',
           accessToken: 'access-token',
           refreshToken: 'refresh-token',
           laohuToken: 'laohu-token',
@@ -159,6 +169,46 @@ describe('runLoginAction', () => {
       await rm(dir, { recursive: true, force: true })
     }
   })
+
+  it('writes tokenUpdatedAt using Asia/Shanghai offset', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'taygedo-login-shanghai-time-'))
+    const accountsPath = join(dir, 'updated-accounts.json')
+    const api = {
+      sendCaptcha: vi.fn(),
+      checkCaptcha: vi.fn(),
+      loginWithCaptcha: vi.fn(),
+      loginWithPassword: vi.fn().mockResolvedValue({ token: 'laohu-token', userId: 'laohu-user' }),
+      userCenterLogin: vi.fn().mockResolvedValue({
+        accessToken: 'access-token',
+        refreshToken: 'refresh-token',
+        uid: 'tjd-uid',
+      }),
+      getBindRole: vi.fn().mockResolvedValue({}),
+    }
+
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-05-25T18:30:00.000Z'))
+    try {
+      await runLoginAction({
+        env: {
+          TAYGEDO_LOGIN_MODE: 'password',
+          TAYGEDO_LOGIN_PHONE: '13800138000',
+          TAYGEDO_LOGIN_PASSWORD: 'secret-password',
+          TAYGEDO_LOGIN_ACCOUNT_ID: 'main',
+          TAYGEDO_LOGIN_UPDATED_ACCOUNTS_PATH: accountsPath,
+        },
+        api,
+        generateDeviceIdentity: () => ({ deviceId: 'device-generated', openudid: 'OPEN-GENERATED', vendorid: 'VENDOR-GENERATED' }),
+      })
+
+      expect(JSON.parse(await readFile(accountsPath, 'utf8'))[0].tokenUpdatedAt).toBe('2026-05-26T02:30:00+08:00')
+    }
+    finally {
+      vi.useRealTimers()
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
 
   it('encrypts the password when a credential key is configured', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'taygedo-login-encrypted-password-'))
@@ -188,7 +238,7 @@ describe('runLoginAction', () => {
           TAYGEDO_LOGIN_UPDATED_ACCOUNTS_PATH: accountsPath,
         },
         api,
-        generateDeviceId: () => 'device-generated',
+        generateDeviceIdentity: () => ({ deviceId: 'device-generated', openudid: 'OPEN-GENERATED', vendorid: 'VENDOR-GENERATED' }),
       })
 
       const payload = await readFile(accountsPath, 'utf8')
@@ -235,13 +285,58 @@ describe('runLoginAction', () => {
           TAYGEDO_CREDENTIAL_KEY_PATH: credentialKeyPath,
         },
         api,
-        generateDeviceId: () => 'device-generated',
+        generateDeviceIdentity: () => ({ deviceId: 'device-generated', openudid: 'OPEN-GENERATED', vendorid: 'VENDOR-GENERATED' }),
       })
 
       expect((await readFile(credentialKeyPath, 'utf8')).trim()).not.toBe('')
       const payload = await readFile(accountsPath, 'utf8')
       expect(payload).not.toContain('secret-password')
       expect(JSON.parse(payload)[0].encryptedPassword).toBeDefined()
+    }
+    finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('forces a new device identity for password login when requested', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'taygedo-login-new-device-'))
+    const accountsPath = join(dir, 'updated-accounts.json')
+    const api = {
+      sendCaptcha: vi.fn(),
+      checkCaptcha: vi.fn(),
+      loginWithCaptcha: vi.fn(),
+      loginWithPassword: vi.fn().mockResolvedValue({ token: 'laohu-token', userId: 'laohu-user' }),
+      userCenterLogin: vi.fn().mockResolvedValue({
+        accessToken: 'access-token',
+        refreshToken: 'refresh-token',
+        uid: 'tjd-uid',
+      }),
+      getBindRole: vi.fn().mockResolvedValue({}),
+    }
+
+    try {
+      await runLoginAction({
+        env: {
+          TAYGEDO_LOGIN_MODE: 'password',
+          TAYGEDO_LOGIN_PHONE: '13800138000',
+          TAYGEDO_LOGIN_PASSWORD: 'secret-password',
+          TAYGEDO_LOGIN_DEVICE_ID: 'old-device',
+          TAYGEDO_LOGIN_OPENUDID: 'OPEN-OLD',
+          TAYGEDO_LOGIN_VENDORID: 'VENDOR-OLD',
+          TAYGEDO_LOGIN_NEW_DEVICE: 'true',
+          TAYGEDO_LOGIN_ACCOUNT_ID: 'main',
+          TAYGEDO_LOGIN_UPDATED_ACCOUNTS_PATH: accountsPath,
+        },
+        api,
+        generateDeviceIdentity: () => ({ deviceId: 'new-device', openudid: 'OPEN-NEW', vendorid: 'VENDOR-NEW' }),
+      })
+
+      expect(api.loginWithPassword).toHaveBeenCalledWith('13800138000', 'secret-password', 'new-device')
+      expect(JSON.parse(await readFile(accountsPath, 'utf8'))[0]).toEqual(expect.objectContaining({
+        deviceId: 'new-device',
+        openudid: 'OPEN-NEW',
+        vendorid: 'VENDOR-NEW',
+      }))
     }
     finally {
       await rm(dir, { recursive: true, force: true })

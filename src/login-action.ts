@@ -1,16 +1,18 @@
-import { randomBytes } from 'node:crypto'
 import { writeFile } from 'node:fs/promises'
 import { mkdir } from 'node:fs/promises'
 import { dirname } from 'node:path'
 import { TaygedoApi, type BindRoleResponse, type LoginWithCaptchaResponse, type UserCenterLoginResponse } from './taygedo/api.js'
 import { parseAccountsSecret, type TaygedoAccount } from './config/accounts.js'
 import { encryptPassword, generateCredentialKey } from './config/credentials.js'
+import { generateDeviceIdentity, type DeviceIdentity } from './taygedo/device.js'
+import { shanghaiDateTime } from './utils/time.js'
 
 export interface LoginActionDependencies {
   env?: Record<string, string | undefined>
   api?: Pick<TaygedoApi, 'sendCaptcha' | 'checkCaptcha' | 'loginWithCaptcha' | 'userCenterLogin' | 'getBindRole'>
     & Partial<Pick<TaygedoApi, 'loginWithPassword'>>
   generateDeviceId?: () => string
+  generateDeviceIdentity?: () => DeviceIdentity
   writeAccounts?: (payload: string) => Promise<void>
   writeCredentialKey?: (credentialKey: string) => Promise<void>
 }
@@ -23,13 +25,13 @@ export async function runLoginAction(deps: LoginActionDependencies = {}): Promis
   const accountsPath = env.TAYGEDO_LOGIN_UPDATED_ACCOUNTS_PATH ?? env.TAYGEDO_UPDATED_ACCOUNTS_PATH ?? 'updated-accounts.json'
 
   if (mode === 'send-code') {
-    const deviceId = optionalEnv(env, 'TAYGEDO_LOGIN_DEVICE_ID') ?? deps.generateDeviceId?.() ?? generateDeviceId()
-    await api.sendCaptcha(phone, deviceId)
+    const device = resolveDeviceIdentity(env, deps)
+    await api.sendCaptcha(phone, device.deviceId)
     const devicePath = env.TAYGEDO_LOGIN_DEVICE_ID_PATH
     if (devicePath) {
-      await writeTextFile(devicePath, `${deviceId}\n`)
+      await writeTextFile(devicePath, `${device.deviceId}\n`)
     }
-    console.log(`验证码已发送，deviceId: ${deviceId}`)
+    console.log(`验证码已发送，deviceId: ${device.deviceId}`)
     return
   }
 
@@ -37,9 +39,7 @@ export async function runLoginAction(deps: LoginActionDependencies = {}): Promis
     throw new Error('TAYGEDO_LOGIN_MODE must be send-code, login, or password')
   }
 
-  const deviceId = mode === 'password'
-    ? optionalEnv(env, 'TAYGEDO_LOGIN_DEVICE_ID') ?? deps.generateDeviceId?.() ?? generateDeviceId()
-    : requireEnv(env, 'TAYGEDO_LOGIN_DEVICE_ID')
+  const device = resolveDeviceIdentity(env, deps, { requireExistingDeviceId: mode !== 'password' })
   const accountId = requireEnv(env, 'TAYGEDO_LOGIN_ACCOUNT_ID')
   const accountName = optionalEnv(env, 'TAYGEDO_LOGIN_ACCOUNT_NAME') ?? accountId
 
@@ -49,22 +49,24 @@ export async function runLoginAction(deps: LoginActionDependencies = {}): Promis
     if (!api.loginWithPassword) {
       throw new Error('Password login is not supported by the configured API client')
     }
-    loginResult = await api.loginWithPassword(phone, requireEnv(env, 'TAYGEDO_LOGIN_PASSWORD'), deviceId)
+    loginResult = await api.loginWithPassword(phone, requireEnv(env, 'TAYGEDO_LOGIN_PASSWORD'), device.deviceId)
   }
   else {
     const captcha = requireEnv(env, 'TAYGEDO_LOGIN_CAPTCHA')
-    await api.checkCaptcha(phone, captcha, deviceId)
-    loginResult = await api.loginWithCaptcha(phone, captcha, deviceId)
+    await api.checkCaptcha(phone, captcha, device.deviceId)
+    loginResult = await api.loginWithCaptcha(phone, captcha, device.deviceId)
   }
-  const userCenter = await api.userCenterLogin(loginResult.token, loginResult.userId, deviceId)
+  const userCenter = await api.userCenterLogin(loginResult.token, loginResult.userId, device.deviceId)
   const role = await tryGetBindRole(api, userCenter.accessToken, userCenter.uid)
-  const tokenUpdatedAt = new Date().toISOString()
+  const tokenUpdatedAt = shanghaiDateTime()
 
   const nextAccount: TaygedoAccount = {
     id: accountId,
     name: accountName,
     uid: userCenter.uid,
-    deviceId,
+    deviceId: device.deviceId,
+    openudid: device.openudid,
+    vendorid: device.vendorid,
     accessToken: userCenter.accessToken,
     refreshToken: userCenter.refreshToken,
     laohuToken: loginResult.token,
@@ -145,8 +147,43 @@ function optionalEnv(env: Record<string, string | undefined>, key: string): stri
   return value
 }
 
-function generateDeviceId(): string {
-  return randomBytes(16).toString('hex')
+function resolveDeviceIdentity(
+  env: Record<string, string | undefined>,
+  deps: Pick<LoginActionDependencies, 'generateDeviceId' | 'generateDeviceIdentity'>,
+  options: { requireExistingDeviceId?: boolean } = {},
+): DeviceIdentity {
+  const forceNew = parseBoolean(optionalEnv(env, 'TAYGEDO_LOGIN_NEW_DEVICE'))
+  if (!forceNew) {
+    const existingDeviceId = optionalEnv(env, 'TAYGEDO_LOGIN_DEVICE_ID')
+    if (existingDeviceId) {
+      const generated = generatedIdentity(deps)
+      return {
+        deviceId: existingDeviceId,
+        openudid: optionalEnv(env, 'TAYGEDO_LOGIN_OPENUDID') ?? generated.openudid,
+        vendorid: optionalEnv(env, 'TAYGEDO_LOGIN_VENDORID') ?? generated.vendorid,
+      }
+    }
+    if (options.requireExistingDeviceId) {
+      requireEnv(env, 'TAYGEDO_LOGIN_DEVICE_ID')
+    }
+  }
+
+  return generatedIdentity(deps)
+}
+
+function generatedIdentity(deps: Pick<LoginActionDependencies, 'generateDeviceId' | 'generateDeviceIdentity'>): DeviceIdentity {
+  if (deps.generateDeviceIdentity) {
+    return deps.generateDeviceIdentity()
+  }
+  const generated = generateDeviceIdentity()
+  if (deps.generateDeviceId) {
+    generated.deviceId = deps.generateDeviceId()
+  }
+  return generated
+}
+
+function parseBoolean(value: string | undefined): boolean {
+  return value ? ['1', 'true', 'yes', 'on'].includes(value.toLowerCase()) : false
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
