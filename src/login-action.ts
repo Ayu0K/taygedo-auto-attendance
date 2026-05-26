@@ -8,6 +8,7 @@ import { parseAccountsSecret, type TaygedoAccount } from './config/accounts.js'
 export interface LoginActionDependencies {
   env?: Record<string, string | undefined>
   api?: Pick<TaygedoApi, 'sendCaptcha' | 'checkCaptcha' | 'loginWithCaptcha' | 'userCenterLogin' | 'getBindRole'>
+    & Partial<Pick<TaygedoApi, 'loginWithPassword'>>
   generateDeviceId?: () => string
 }
 
@@ -29,17 +30,29 @@ export async function runLoginAction(deps: LoginActionDependencies = {}): Promis
     return
   }
 
-  if (mode !== 'login') {
-    throw new Error('TAYGEDO_LOGIN_MODE must be send-code or login')
+  if (mode !== 'login' && mode !== 'password') {
+    throw new Error('TAYGEDO_LOGIN_MODE must be send-code, login, or password')
   }
 
-  const deviceId = requireEnv(env, 'TAYGEDO_LOGIN_DEVICE_ID')
-  const captcha = requireEnv(env, 'TAYGEDO_LOGIN_CAPTCHA')
+  const deviceId = mode === 'password'
+    ? optionalEnv(env, 'TAYGEDO_LOGIN_DEVICE_ID') ?? deps.generateDeviceId?.() ?? generateDeviceId()
+    : requireEnv(env, 'TAYGEDO_LOGIN_DEVICE_ID')
   const accountId = requireEnv(env, 'TAYGEDO_LOGIN_ACCOUNT_ID')
   const accountName = optionalEnv(env, 'TAYGEDO_LOGIN_ACCOUNT_NAME') ?? accountId
 
-  await api.checkCaptcha(phone, captcha, deviceId)
-  const loginResult = await api.loginWithCaptcha(phone, captcha, deviceId)
+  let loginResult: LoginWithCaptchaResponse
+  const password = optionalEnv(env, 'TAYGEDO_LOGIN_PASSWORD')
+  if (mode === 'password') {
+    if (!api.loginWithPassword) {
+      throw new Error('Password login is not supported by the configured API client')
+    }
+    loginResult = await api.loginWithPassword(phone, requireEnv(env, 'TAYGEDO_LOGIN_PASSWORD'), deviceId)
+  }
+  else {
+    const captcha = requireEnv(env, 'TAYGEDO_LOGIN_CAPTCHA')
+    await api.checkCaptcha(phone, captcha, deviceId)
+    loginResult = await api.loginWithCaptcha(phone, captcha, deviceId)
+  }
   const userCenter = await api.userCenterLogin(loginResult.token, loginResult.userId, deviceId)
   const role = await tryGetBindRole(api, userCenter.accessToken, userCenter.uid)
   const tokenUpdatedAt = new Date().toISOString()
@@ -54,6 +67,11 @@ export async function runLoginAction(deps: LoginActionDependencies = {}): Promis
     laohuToken: loginResult.token,
     laohuUserId: loginResult.userId,
     tokenUpdatedAt,
+  }
+  if (mode === 'password') {
+    nextAccount.phone = phone
+    nextAccount.password = password
+    nextAccount.passwordUpdatedAt = tokenUpdatedAt
   }
   if (role.roleId) {
     nextAccount.roleId = role.roleId

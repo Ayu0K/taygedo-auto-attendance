@@ -1,0 +1,98 @@
+import { loadRuntimeConfig } from '../config/runtime.js'
+import { AttendanceService } from '../services/attendance-service.js'
+import { LoginService, type LoginServiceRunOptions } from '../services/login-service.js'
+import { createAccountStore, createStateStore } from '../stores/factory.js'
+
+interface LocalCliDependencies {
+  service?: LocalCliService
+}
+
+interface LocalCliService {
+  runAttendance(options: { accountsFile: string, stateDir?: string }): Promise<unknown>
+  runLogin(options: LoginServiceRunOptions): Promise<unknown>
+  sendLoginCode(options: LoginServiceRunOptions): Promise<unknown>
+}
+
+export async function runLocalCli(argv = process.argv.slice(2), deps: LocalCliDependencies = {}): Promise<void> {
+  const command = argv[0]
+  const options = parseArgs(argv.slice(1))
+  const service: LocalCliService = deps.service ?? createDefaultService()
+
+  if (command === 'attendance') {
+    const accountsFile = options['accounts-file']
+    await service.runAttendance({
+      accountsFile: accountsFile ?? '',
+      stateDir: options['state-dir'],
+    })
+    return
+  }
+
+  if (command === 'login') {
+    const accountsFile = requireOption(options, 'accounts-file')
+    await service.runLogin({
+      mode: requireOption(options, 'mode'),
+      phone: requireOption(options, 'phone'),
+      password: options.password,
+      captcha: options.captcha,
+      deviceId: options['device-id'],
+      accountId: options['account-id'],
+      accountName: options['account-name'],
+      accountsFile,
+    })
+    return
+  }
+
+  throw new Error('Usage: local-cli attendance|login --accounts-file <path>')
+}
+
+function createDefaultService(): LocalCliService {
+  return {
+    async runAttendance(options) {
+      const config = loadRuntimeConfig({
+        ...process.env,
+        TAYGEDO_ACCOUNT_STORE: process.env.TAYGEDO_ACCOUNT_STORE ?? 'file',
+        TAYGEDO_STATE_STORE: process.env.TAYGEDO_STATE_STORE ?? 'file',
+      })
+      await new AttendanceService({
+        accountStore: createAccountStore({ config, accountsFile: options.accountsFile }),
+        stateStore: createStateStore({ config, stateDir: options.stateDir }),
+        notificationUrls: config.notificationUrls,
+        maxRetries: config.maxRetries,
+      }).run()
+    },
+    async runLogin(options) {
+      await new LoginService().runLogin(options)
+    },
+    async sendLoginCode(options) {
+      await new LoginService().sendLoginCode(options)
+    },
+  }
+}
+
+function parseArgs(args: string[]): Record<string, string | undefined> {
+  const parsed: Record<string, string | undefined> = {}
+  for (let index = 0; index < args.length; index++) {
+    const arg = args[index]
+    if (!arg?.startsWith('--')) {
+      continue
+    }
+    parsed[arg.slice(2)] = args[index + 1]
+    index++
+  }
+  return parsed
+}
+
+function requireOption(options: Record<string, string | undefined>, key: string): string {
+  const value = options[key]
+  if (!value) {
+    throw new Error(`Missing required option --${key}`)
+  }
+  return value
+}
+
+if (import.meta.url === `file://${process.argv[1]}`) {
+  runLocalCli().catch((error: unknown) => {
+    console.error(error instanceof Error ? error.message : String(error))
+    process.exitCode = 1
+  })
+}

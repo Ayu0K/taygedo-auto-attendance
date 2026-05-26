@@ -13,7 +13,7 @@ export interface RunnerDependencies {
 }
 
 type AttendanceApi = Pick<TaygedoApi, 'refreshToken' | 'getGameRoles' | 'appSignin' | 'getSigninState' | 'getSigninRewards' | 'gameSignin'>
-  & Partial<Pick<TaygedoApi, 'userCenterLogin'>>
+  & Partial<Pick<TaygedoApi, 'loginWithPassword' | 'userCenterLogin'>>
 
 export interface RunAttendanceResult {
   updatedAccounts: TaygedoAccount[]
@@ -121,9 +121,30 @@ async function runAccount(
 }
 
 async function refreshOrRebuildSession(
-  api: Pick<TaygedoApi, 'refreshToken'> & Partial<Pick<TaygedoApi, 'userCenterLogin'>>,
+  api: Pick<TaygedoApi, 'refreshToken'> & Partial<Pick<TaygedoApi, 'loginWithPassword' | 'userCenterLogin'>>,
   account: TaygedoAccount,
 ): Promise<{ account: TaygedoAccount, accessToken: string }> {
+  if (account.phone && account.password && api.loginWithPassword && api.userCenterLogin) {
+    try {
+      const login = await api.loginWithPassword(account.phone, account.password, account.deviceId)
+      const rebuilt = await api.userCenterLogin(login.token, login.userId, account.deviceId)
+      const updatedAccount = withSession(account, {
+        accessToken: rebuilt.accessToken,
+        refreshToken: rebuilt.refreshToken,
+        uid: rebuilt.uid,
+        laohuToken: login.token,
+        laohuUserId: login.userId,
+      })
+      return {
+        account: updatedAccount,
+        accessToken: rebuilt.accessToken,
+      }
+    }
+    catch {
+      // Fall back to refreshToken / stored laohu credentials below.
+    }
+  }
+
   try {
     const refreshed = await api.refreshToken(account.refreshToken, account.deviceId)
     const updatedAccount = withSession(account, {
@@ -204,15 +225,22 @@ async function signWithSession(
 
 function withSession(
   account: TaygedoAccount,
-  session: { accessToken: string, refreshToken: string, uid?: string },
+  session: { accessToken: string, refreshToken: string, uid?: string, laohuToken?: string, laohuUserId?: string },
 ): TaygedoAccount {
-  return {
+  const updatedAccount: TaygedoAccount = {
     ...account,
     uid: session.uid ?? account.uid,
     accessToken: session.accessToken,
     refreshToken: session.refreshToken,
     tokenUpdatedAt: new Date().toISOString(),
   }
+  if (session.laohuToken) {
+    updatedAccount.laohuToken = session.laohuToken
+  }
+  if (session.laohuUserId) {
+    updatedAccount.laohuUserId = session.laohuUserId
+  }
+  return updatedAccount
 }
 
 function isRefreshRejected(error: unknown): boolean {

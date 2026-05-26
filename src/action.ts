@@ -1,6 +1,9 @@
-import { writeFile } from 'node:fs/promises'
+import { loadRuntimeConfig } from './config/runtime.js'
 import { TaygedoApi } from './taygedo/api.js'
 import { runAttendance, type RunnerDependencies } from './runner.js'
+import { GitHubFileAccountStore } from './stores/account-store.js'
+import { MemoryStateStore } from './stores/state-store.js'
+import { AttendanceService } from './services/attendance-service.js'
 
 interface ActionOptions {
   env?: Record<string, string | undefined>
@@ -9,36 +12,25 @@ interface ActionOptions {
 
 export async function runAction(options: ActionOptions = {}): Promise<void> {
   const env = options.env ?? process.env
-  const accountsSecret = env.TAYGEDO_ACCOUNTS
-  if (!accountsSecret) {
-    throw new Error('Missing required env TAYGEDO_ACCOUNTS')
-  }
-
-  const outputPath = env.TAYGEDO_UPDATED_ACCOUNTS_PATH ?? 'updated-accounts.json'
-  await runAttendance({
-    accountsSecret,
+  const config = loadRuntimeConfig(env)
+  const service = new AttendanceService({
+    accountStore: {
+      readAccounts: async () => {
+        if (!config.accountsSecret) {
+          throw new Error('Missing required env TAYGEDO_ACCOUNTS')
+        }
+        return config.accountsSecret
+      },
+      writeAccounts: payload => new GitHubFileAccountStore(config.updatedAccountsPath).writeAccounts(payload),
+    },
+    stateStore: new MemoryStateStore(config.statePrefix),
     api: options.api ?? new TaygedoApi(),
-    notificationUrls: [
-      ...splitComma(env.TAYGEDO_NOTIFICATION_URLS),
-      ...serverChanUrls(env.TAYGEDO_SERVERCHAN_SENDKEY),
-    ],
-    maxRetries: Number(env.TAYGEDO_MAX_RETRIES ?? '3'),
-    secretWriter: payload => writeFile(outputPath, `${payload}\n`, 'utf8'),
+    notificationUrls: config.notificationUrls,
+    maxRetries: config.maxRetries,
   })
+  await service.run()
 
-  console.log(`Updated accounts written to ${outputPath}`)
-}
-
-function splitComma(value: string | undefined): string[] {
-  if (!value) {
-    return []
-  }
-  return value.split(',').map(item => item.trim()).filter(Boolean)
-}
-
-function serverChanUrls(sendkey: string | undefined): string[] {
-  const trimmedSendkey = sendkey?.trim()
-  return trimmedSendkey ? [`https://sctapi.ftqq.com/${trimmedSendkey}.send`] : []
+  console.log(`Updated accounts written to ${config.updatedAccountsPath}`)
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {

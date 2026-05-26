@@ -168,6 +168,56 @@ export class TaygedoApi {
     }
   }
 
+  async loginWithPassword(phone: string, password: string, deviceId: string): Promise<LoginWithCaptchaResponse> {
+    const body = signedLaohuBody({
+      deviceType: 'LGE-AN10',
+      idfa: '',
+      sign: '',
+      adm: '',
+      deviceId,
+      version: '1',
+      deviceName: 'LGE-AN10',
+      mac: '',
+      t: String(Date.now()),
+      appId: '10550',
+      deviceSys: '12',
+      username: aesBase64Encode(phone),
+      password: aesBase64Encode(password),
+      deviceModel: 'LGE-AN10',
+      sdkVersion: '4.129.0',
+      bid: 'com.pwrd.htassistant',
+      channelId: '1',
+    })
+
+    const response = await this.fetchImpl(`${LAOHU_BASE_URL}/openApi/secureLogin`, {
+      method: 'POST',
+      headers: {
+        platform: 'android',
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      body,
+    })
+
+    const data = await readJson(response, 'loginWithPassword') as {
+      code?: number
+      message?: string
+      msg?: string
+      result?: {
+        token?: string
+        userId?: string | number
+      }
+    }
+
+    if (!response.ok || data.code !== 0 || !data.result?.token || data.result.userId === undefined) {
+      throw new Error(data.message ?? data.msg ?? 'loginWithPassword request failed')
+    }
+
+    return {
+      token: data.result.token,
+      userId: String(data.result.userId),
+    }
+  }
+
   async userCenterLogin(token: string, userId: string, deviceId: string): Promise<UserCenterLoginResponse> {
     const response = await this.fetchImpl(`${TAYGEDO_BASE_URL}/usercenter/api/login`, {
       method: 'POST',

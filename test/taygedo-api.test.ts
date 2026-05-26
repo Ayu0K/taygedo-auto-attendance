@@ -155,4 +155,34 @@ describe('TaygedoApi', () => {
       }),
     )
   })
+
+  it('logs in with a password through the laohu secureLogin endpoint', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ code: 0, message: 'ok', result: { token: 'laohu-token', userId: 'user-1' } }), { status: 200 }),
+    )
+    const api = new TaygedoApi({ fetch: fetchMock })
+
+    expect(await api.loginWithPassword('13800138000', 'secret-password', 'device-1')).toEqual({
+      token: 'laohu-token',
+      userId: 'user-1',
+    })
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://user.laohu.com/openApi/secureLogin',
+      expect.objectContaining({
+        method: 'POST',
+        headers: expect.objectContaining({
+          platform: 'android',
+          'Content-Type': 'application/x-www-form-urlencoded',
+        }),
+        body: expect.any(String),
+      }),
+    )
+
+    const body = String(fetchMock.mock.calls[0]?.[1]?.body)
+    expect(body).toContain('username=')
+    expect(body).toContain('password=')
+    expect(body).not.toContain('13800138000')
+    expect(body).not.toContain('secret-password')
+  })
 })

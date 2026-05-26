@@ -12,6 +12,7 @@ describe('runLoginAction', () => {
       sendCaptcha: vi.fn().mockResolvedValue(undefined),
       checkCaptcha: vi.fn(),
       loginWithCaptcha: vi.fn(),
+      loginWithPassword: vi.fn(),
       userCenterLogin: vi.fn(),
       getBindRole: vi.fn(),
     }
@@ -42,6 +43,7 @@ describe('runLoginAction', () => {
       sendCaptcha: vi.fn(),
       checkCaptcha: vi.fn().mockResolvedValue(undefined),
       loginWithCaptcha: vi.fn().mockResolvedValue({ token: 'laohu-token', userId: 'laohu-user' }),
+      loginWithPassword: vi.fn(),
       userCenterLogin: vi.fn().mockResolvedValue({
         accessToken: 'access-token',
         refreshToken: 'refresh-token',
@@ -104,11 +106,68 @@ describe('runLoginAction', () => {
     }
   })
 
+  it('logs in with a password and stores credentials for automatic relogin', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'taygedo-login-password-'))
+    const accountsPath = join(dir, 'updated-accounts.json')
+    const api = {
+      sendCaptcha: vi.fn(),
+      checkCaptcha: vi.fn(),
+      loginWithCaptcha: vi.fn(),
+      loginWithPassword: vi.fn().mockResolvedValue({ token: 'laohu-token', userId: 'laohu-user' }),
+      userCenterLogin: vi.fn().mockResolvedValue({
+        accessToken: 'access-token',
+        refreshToken: 'refresh-token',
+        uid: 'tjd-uid',
+      }),
+      getBindRole: vi.fn().mockResolvedValue({}),
+    }
+
+    try {
+      await runLoginAction({
+        env: {
+          TAYGEDO_LOGIN_MODE: 'password',
+          TAYGEDO_LOGIN_PHONE: '13800138000',
+          TAYGEDO_LOGIN_PASSWORD: 'secret-password',
+          TAYGEDO_LOGIN_ACCOUNT_ID: 'main',
+          TAYGEDO_LOGIN_ACCOUNT_NAME: '主账号',
+          TAYGEDO_LOGIN_UPDATED_ACCOUNTS_PATH: accountsPath,
+        },
+        api,
+        generateDeviceId: () => 'device-generated',
+      })
+
+      expect(api.checkCaptcha).not.toHaveBeenCalled()
+      expect(api.loginWithCaptcha).not.toHaveBeenCalled()
+      expect(api.loginWithPassword).toHaveBeenCalledWith('13800138000', 'secret-password', 'device-generated')
+      expect(api.userCenterLogin).toHaveBeenCalledWith('laohu-token', 'laohu-user', 'device-generated')
+      expect(JSON.parse(await readFile(accountsPath, 'utf8'))).toEqual([
+        {
+          id: 'main',
+          name: '主账号',
+          uid: 'tjd-uid',
+          deviceId: 'device-generated',
+          accessToken: 'access-token',
+          refreshToken: 'refresh-token',
+          laohuToken: 'laohu-token',
+          laohuUserId: 'laohu-user',
+          tokenUpdatedAt: expect.any(String),
+          phone: '13800138000',
+          password: 'secret-password',
+          passwordUpdatedAt: expect.any(String),
+        },
+      ])
+    }
+    finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
   it('requires a stored device id when logging in with a captcha', async () => {
     const api = {
       sendCaptcha: vi.fn(),
       checkCaptcha: vi.fn(),
       loginWithCaptcha: vi.fn(),
+      loginWithPassword: vi.fn(),
       userCenterLogin: vi.fn(),
       getBindRole: vi.fn(),
     }

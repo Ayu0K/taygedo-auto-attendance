@@ -1,0 +1,18 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "taygedo-auto-attendance",
+  "main": "src/runtimes/cloudflare-worker.ts",
+  "compatibility_date": "2026-05-26",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": {
+    "enabled": true
+  },
+  "kv_namespaces": [
+    {
+      "binding": "KV"
+    }
+  ],
+  "triggers": {
+    "crons": ["30 0 * * *"]
+  }
+}

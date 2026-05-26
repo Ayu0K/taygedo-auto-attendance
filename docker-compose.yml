@@ -1,0 +1,15 @@
+services:
+  taygedo-attendance:
+    image: ghcr.io/zzstar101/taygedo-auto-attendance:latest
+    container_name: taygedo-attendance
+    restart: "no"
+    environment:
+      TAYGEDO_NOTIFICATION_URLS: ${TAYGEDO_NOTIFICATION_URLS:-}
+      TAYGEDO_SERVERCHAN_SENDKEY: ${TAYGEDO_SERVERCHAN_SENDKEY:-}
+      TAYGEDO_MAX_RETRIES: ${TAYGEDO_MAX_RETRIES:-3}
+      TAYGEDO_ACCOUNT_STORE: ${TAYGEDO_ACCOUNT_STORE:-file}
+      TAYGEDO_STATE_STORE: ${TAYGEDO_STATE_STORE:-file}
+      TAYGEDO_UPSTASH_REDIS_REST_URL: ${TAYGEDO_UPSTASH_REDIS_REST_URL:-}
+      TAYGEDO_UPSTASH_REDIS_REST_TOKEN: ${TAYGEDO_UPSTASH_REDIS_REST_TOKEN:-}
+    volumes:
+      - ./data:/data

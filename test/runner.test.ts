@@ -214,6 +214,99 @@ describe('runAttendance', () => {
     expect(secretWriter).toHaveBeenCalledWith(JSON.stringify(result.updatedAccounts, null, 2))
   })
 
+  it('uses stored phone and password before refresh when the stored accessToken is rejected', async () => {
+    const secretWriter = vi.fn()
+    const api = {
+      loginWithPassword: vi.fn().mockResolvedValue({ token: 'new-laohu-token', userId: 'new-laohu-user' }),
+      refreshToken: vi.fn(),
+      userCenterLogin: vi.fn().mockResolvedValue({ accessToken: 'password-access', refreshToken: 'password-refresh', uid: '1' }),
+      getGameRoles: vi.fn()
+        .mockRejectedValueOnce(new Error('AUTH_EXPIRED: token expired'))
+        .mockResolvedValueOnce({ roles: [{ roleId: 'role-1256-a', roleName: '幻塔A' }] })
+        .mockResolvedValueOnce({ roles: [] })
+        .mockResolvedValueOnce({ roles: [] }),
+      appSignin: vi.fn().mockResolvedValue({ exp: 10, goldCoin: 20 }),
+      getSigninState: vi.fn().mockResolvedValue({ days: 1 }),
+      getSigninRewards: vi.fn().mockResolvedValue([{ name: '奖励一', num: 1 }]),
+      gameSignin: vi.fn().mockResolvedValue(undefined),
+    }
+
+    const result = await runAttendance({
+      accountsSecret: JSON.stringify([
+        {
+          id: 'main',
+          name: '主账号',
+          uid: '1',
+          deviceId: 'device-1',
+          accessToken: 'stored-access',
+          refreshToken: 'old-main',
+          phone: '13800138000',
+          password: 'secret-password',
+        },
+      ]),
+      api,
+      maxRetries: 1,
+      secretWriter,
+    })
+
+    expect(api.loginWithPassword).toHaveBeenCalledWith('13800138000', 'secret-password', 'device-1')
+    expect(api.userCenterLogin).toHaveBeenCalledWith('new-laohu-token', 'new-laohu-user', 'device-1')
+    expect(api.refreshToken).not.toHaveBeenCalled()
+    expect(result.updatedAccounts[0]).toEqual(expect.objectContaining({
+      accessToken: 'password-access',
+      refreshToken: 'password-refresh',
+      laohuToken: 'new-laohu-token',
+      laohuUserId: 'new-laohu-user',
+      phone: '13800138000',
+      password: 'secret-password',
+      tokenUpdatedAt: expect.any(String),
+    }))
+    expect(secretWriter).toHaveBeenCalledWith(JSON.stringify(result.updatedAccounts, null, 2))
+  })
+
+  it('falls back to refresh when password relogin fails', async () => {
+    const api = {
+      loginWithPassword: vi.fn().mockRejectedValue(new Error('password login failed')),
+      refreshToken: vi.fn().mockResolvedValue({ accessToken: 'new-access', refreshToken: 'new-refresh', uid: '1' }),
+      userCenterLogin: vi.fn(),
+      getGameRoles: vi.fn()
+        .mockRejectedValueOnce(new Error('AUTH_EXPIRED: token expired'))
+        .mockResolvedValueOnce({ roles: [{ roleId: 'role-1256-a', roleName: '幻塔A' }] })
+        .mockResolvedValueOnce({ roles: [] })
+        .mockResolvedValueOnce({ roles: [] }),
+      appSignin: vi.fn().mockResolvedValue({ exp: 10, goldCoin: 20 }),
+      getSigninState: vi.fn().mockResolvedValue({ days: 1 }),
+      getSigninRewards: vi.fn().mockResolvedValue([{ name: '奖励一', num: 1 }]),
+      gameSignin: vi.fn().mockResolvedValue(undefined),
+    }
+
+    const result = await runAttendance({
+      accountsSecret: JSON.stringify([
+        {
+          id: 'main',
+          name: '主账号',
+          uid: '1',
+          deviceId: 'device-1',
+          accessToken: 'stored-access',
+          refreshToken: 'old-main',
+          phone: '13800138000',
+          password: 'secret-password',
+        },
+      ]),
+      api,
+      maxRetries: 1,
+    })
+
+    expect(api.loginWithPassword).toHaveBeenCalledTimes(1)
+    expect(api.refreshToken).toHaveBeenCalledWith('old-main', 'device-1')
+    expect(result.updatedAccounts[0]).toEqual(expect.objectContaining({
+      accessToken: 'new-access',
+      refreshToken: 'new-refresh',
+      phone: '13800138000',
+      password: 'secret-password',
+    }))
+  })
+
   it('does not write the secret when refresh is rejected and no laohu credentials are available', async () => {
     const secretWriter = vi.fn()
     const api = {

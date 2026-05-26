@@ -8,6 +8,9 @@ export interface TaygedoAccount {
   laohuToken?: string
   laohuUserId?: string
   tokenUpdatedAt?: string
+  phone?: string
+  password?: string
+  passwordUpdatedAt?: string
   roleId?: string
   roleName?: string
 }
@@ -42,6 +45,9 @@ export function parseAccountsSecret(secret: string): TaygedoAccount[] {
     assignOptionalString(parsedAccount, account, 'laohuToken')
     assignOptionalString(parsedAccount, account, 'laohuUserId')
     assignOptionalString(parsedAccount, account, 'tokenUpdatedAt')
+    assignOptionalString(parsedAccount, account, 'phone')
+    assignOptionalString(parsedAccount, account, 'password')
+    assignOptionalString(parsedAccount, account, 'passwordUpdatedAt')
 
     const roleId = optionalString(account, 'roleId')
     const roleName = optionalString(account, 'roleName')

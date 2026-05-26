@@ -1,3 +1,5 @@
 node_modules
 updated-accounts.json
 .env
+data
+.data
