@@ -1,4 +1,5 @@
 node_modules
+dist
 updated-accounts.json
 .env
 data

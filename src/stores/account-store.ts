@@ -73,6 +73,7 @@ export class UpstashAccountStore implements AccountStore {
     private readonly token: string,
     private readonly key = 'TAYGEDO_ACCOUNTS',
     private readonly fetchImpl: typeof fetch = fetch,
+    private readonly initialAccounts?: string,
   ) {
     this.baseUrl = url.replace(/\/+$/, '')
   }
@@ -80,6 +81,10 @@ export class UpstashAccountStore implements AccountStore {
   async readAccounts(): Promise<string> {
     const data = await this.request<{ result?: string | null }>(`get/${encodeURIComponent(this.key)}`)
     if (!data.result) {
+      if (this.initialAccounts) {
+        await this.writeAccounts(this.initialAccounts)
+        return this.initialAccounts
+      }
       throw new Error(`Upstash 中缺少账号配置，key：${this.key}`)
     }
     return data.result

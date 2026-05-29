@@ -10,12 +10,15 @@
     "local": "tsx src/runtimes/local-cli.ts",
     "worker:dev": "wrangler dev",
     "deploy": "wrangler deploy",
+    "cloud:function:build": "node scripts/build-cloud-function.mjs",
+    "cloud:function:pack": "node scripts/build-cloud-function.mjs --pack",
     "build": "tsc -p tsconfig.json",
     "test": "vitest run",
     "test:watch": "vitest"
   },
   "devDependencies": {
     "@types/node": "^24.12.4",
+    "esbuild": "^0.28.0",
     "tsx": "^4.22.3",
     "typescript": "^6.0.3",
     "vitest": "^4.1.7",

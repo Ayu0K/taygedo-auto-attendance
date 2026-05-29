@@ -44,7 +44,7 @@ export function createAccountStore(options: StoreFactoryOptions): AccountStore {
   if (!config.upstashUrl || !config.upstashToken) {
     throw new Error('Upstash 账号存储需要配置 TAYGEDO_UPSTASH_REDIS_REST_URL 和 TAYGEDO_UPSTASH_REDIS_REST_TOKEN')
   }
-  return new UpstashAccountStore(config.upstashUrl, config.upstashToken, config.accountsKey, options.fetch)
+  return new UpstashAccountStore(config.upstashUrl, config.upstashToken, config.accountsKey, options.fetch, config.accountsSecret)
 }
 
 export function createStateStore(options: StoreFactoryOptions): StateStore {

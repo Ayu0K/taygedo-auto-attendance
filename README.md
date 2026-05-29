@@ -2,13 +2,14 @@
 
 使用 TypeScript 实现的塔吉多自动签到工具，支持多账号、自动重登、通知推送和多种自托管部署方式。
 
-支持平台：GitHub Actions、Cloudflare Workers、Docker、本地 CLI。默认尝试签到全部已知游戏 `1256`、`1257`、`1289`。
+支持平台：GitHub Actions、Cloudflare Workers、腾讯云 / 阿里云云函数、Docker、本地 CLI。默认尝试签到全部已知游戏 `1256`、`1257`、`1289`。
 
 ## 功能特点
 
 - 支持多账号签到和账号配置自动写回
 - 支持 GitHub Actions 定时签到和手动触发
 - 支持 Cloudflare Workers 定时任务、HTTP 手动触发、Web 登录页和 KV 存储
+- 支持腾讯云 SCF / 阿里云 FC 定时云函数，使用 Upstash Redis REST 持久化账号和状态
 - 支持 Docker / Docker Compose 和本地 CLI
 - 支持短信验证码登录、账号密码登录
 - 支持 APP 签到、游戏签到和塔吉多金币任务
@@ -75,6 +76,124 @@ curl -H "Authorization: Bearer <TAYGEDO_ADMIN_TOKEN>" https://你的-worker.work
 ```bash
 curl -H "Authorization: Bearer <TAYGEDO_ADMIN_TOKEN>" "https://你的-worker.workers.dev/run?force=1"
 ```
+
+</details>
+
+### 腾讯云 / 阿里云云函数部署
+
+适合把云函数当作 GitHub Actions 的替代定时任务使用。云函数版只负责定时签到，不提供 HTTP 手动触发、登录页或管理接口；账号、刷新后的 token、每日去重状态都必须写入 Upstash Redis REST。
+
+<details>
+<summary>展开查看详细步骤</summary>
+
+#### 1. 准备账号 JSON
+
+先用本地 CLI 或 Docker 生成账号配置。推荐先在本地确认能正常签到，再部署云函数。
+
+```bash
+pnpm install
+pnpm local login \
+  --mode password \
+  --phone 13800138000 \
+  --account-id main \
+  --account-name 主账号 \
+  --accounts-file accounts.json
+```
+
+如果账号里包含 `encryptedPassword`，云函数环境变量里必须配置同一段 `TAYGEDO_CREDENTIAL_KEY`。
+
+#### 2. 创建 Upstash Redis
+
+1. 打开 <https://console.upstash.com/> 并创建 Redis 数据库。
+2. 进入数据库详情，复制 **REST URL** 和 **REST Token**。
+3. 云函数不需要挂载 Upstash，也不需要 Redis TCP 连接；只要函数能访问公网 HTTPS 即可。
+
+账号初始化有两种方式。
+
+小账号配置可以把 `accounts.json` 内容临时放入云函数环境变量：
+
+```text
+TAYGEDO_ACCOUNTS=[accounts.json 的完整 JSON]
+```
+
+首次运行时程序会把它写入 Upstash 的 `TAYGEDO_ACCOUNTS` key。确认 Upstash 已有账号配置后，可以删除云函数里的 `TAYGEDO_ACCOUNTS`，避免环境变量过长。
+
+账号 JSON 较大时，建议直接从本地写入 Upstash，避开云函数环境变量大小限制：
+
+```bash
+curl -X POST \
+  -H "Authorization: Bearer <UPSTASH_REDIS_REST_TOKEN>" \
+  --data-binary @accounts.json \
+  "<UPSTASH_REDIS_REST_URL>/set/TAYGEDO_ACCOUNTS"
+```
+
+验证写入：
+
+```bash
+curl -H "Authorization: Bearer <UPSTASH_REDIS_REST_TOKEN>" \
+  "<UPSTASH_REDIS_REST_URL>/get/TAYGEDO_ACCOUNTS"
+```
+
+#### 3. 构建上传包
+
+```bash
+pnpm install
+pnpm cloud:function:pack
+```
+
+上传 `dist/cloud-function.zip`。压缩包根目录包含 `index.js`，入口方法固定填写：
+
+```text
+index.main_handler
+```
+
+#### 4. 配置环境变量
+
+必填：
+
+| 变量名 | 说明 |
+| --- | --- |
+| `TAYGEDO_UPSTASH_REDIS_REST_URL` | Upstash Redis 的 REST URL |
+| `TAYGEDO_UPSTASH_REDIS_REST_TOKEN` | Upstash Redis 的 REST Token |
+| `TAYGEDO_CREDENTIAL_KEY` | 解密账号加密密码用的密钥 |
+
+可选：
+
+| 变量名 | 说明 |
+| --- | --- |
+| `TAYGEDO_ACCOUNTS` | 仅首次初始化 Upstash 时使用 |
+| `TAYGEDO_ACCOUNTS_KEY` | Upstash 账号 key，默认 `TAYGEDO_ACCOUNTS` |
+| `TAYGEDO_STATE_PREFIX` | Upstash 状态前缀，默认 `taygedo` |
+| `TAYGEDO_NOTIFICATION_URLS` | 普通 webhook，多个用英文逗号分隔 |
+| `TAYGEDO_SERVERCHAN_SENDKEY` | Server 酱 SendKey |
+| `TAYGEDO_MAX_RETRIES` | 单账号最大重试次数，默认 `3` |
+| `TAYGEDO_COIN_TASKS` | 是否执行金币任务，默认 `true` |
+| `TAYGEDO_SHARE_PLATFORM` | 分享平台，默认 `qq` |
+
+云函数版会强制使用 Upstash，不需要配置 `TAYGEDO_ACCOUNT_STORE` 和 `TAYGEDO_STATE_STORE`。
+
+#### 5. 腾讯云 SCF
+
+1. 创建事件函数，运行环境选择 Node.js 18.15 或 Node.js 20.19。
+2. 上传 `dist/cloud-function.zip`。
+3. 执行方法填写 `index.main_handler`。
+4. 超时时间建议设置为 `300 秒`。
+5. 添加上面的环境变量。
+6. 创建定时触发器，例如每天北京时间凌晨后执行一次。
+
+腾讯云定时触发器会异步调用函数；日志里看到 `塔吉多每日签到结果` 即表示执行完成。
+
+#### 6. 阿里云 FC
+
+1. 创建事件函数，请求处理程序类型选择处理事件请求。
+2. 运行环境选择 Node.js 18 或 Node.js 20。
+3. 上传 `dist/cloud-function.zip`。
+4. 请求处理程序填写 `index.main_handler`。
+5. 超时时间建议设置为 `300 秒`。
+6. 添加上面的环境变量。
+7. 创建定时触发器，调用方式选择异步调用。
+
+阿里云定时触发器只需要事件函数，不需要 HTTP 触发器。日志里看到 `塔吉多每日签到结果` 即表示执行完成。
 
 </details>
 

@@ -82,6 +82,31 @@ describe('AccountStore implementations', () => {
     )
   })
 
+  it('seeds Upstash accounts from an initial payload when the key is missing', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ result: null }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ result: 'OK' }), { status: 200 }))
+    const store = new UpstashAccountStore('https://redis.example.com', 'redis-token', 'accounts', fetchMock, '[{"id":"main"}]')
+
+    await expect(store.readAccounts()).resolves.toBe('[{"id":"main"}]')
+
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      1,
+      'https://redis.example.com/get/accounts',
+      expect.objectContaining({
+        headers: expect.objectContaining({ Authorization: 'Bearer redis-token' }),
+      }),
+    )
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      'https://redis.example.com/set/accounts',
+      expect.objectContaining({
+        method: 'POST',
+        body: '[{"id":"main"}]',
+      }),
+    )
+  })
+
   it('reads and writes accounts through unstorage', async () => {
     const storage = new Map<string, unknown>()
     const store = new UnstorageAccountStore({
